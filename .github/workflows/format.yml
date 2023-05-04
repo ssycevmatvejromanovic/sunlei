@@ -14,6 +14,7 @@ jobs:
       contents: write  # for Git to git push
     name: Auto format
     runs-on: ubuntu-latest
+    timeout-minutes: 5
 
     steps:
       - uses: actions/checkout@v3
@@ -22,6 +23,8 @@ jobs:
           node-version: 18
           cache: 'yarn'
       - run: yarn install
+      - run: yarn install
+        working-directory: ./docs
       - run: npm run format
       - name: Commit files
         run: |
