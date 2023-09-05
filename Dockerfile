@@ -1,4 +1,4 @@
-FROM node:18-bullseye as dep-builder
+FROM node:18-bullseye AS dep-builder
 # Here we use the non-slim image to provide build-time deps (compilers and python), thus no need to install later.
 # This effectively speeds up qemu-based cross-build.
 
@@ -11,22 +11,24 @@ RUN \
     if [ "$USE_CHINA_NPM_REGISTRY" = 1 ]; then \
         echo 'use npm mirror' && \
         npm config set registry https://registry.npmmirror.com && \
-        yarn config set registry https://registry.npmmirror.com ; \
+        yarn config set registry https://registry.npmmirror.com && \
+        pnpm config set registry https://registry.npmmirror.com ; \
     fi;
 
-COPY ./yarn.lock /app/
+COPY ./pnpm-lock.yaml /app/
 COPY ./package.json /app/
 
 # lazy install Chromium to avoid cache miss, only install production dependencies to minimize the image size
 RUN \
     set -ex && \
     export PUPPETEER_SKIP_DOWNLOAD=true && \
-    yarn install --production --frozen-lockfile --network-timeout 1000000 && \
-    yarn cache clean
+    corepack enable pnpm && \
+    pnpm install --prod --frozen-lockfile && \
+    pnpm rb
 
 # ---------------------------------------------------------------------------------------------------------------------
 
-FROM debian:bullseye-slim as dep-version-parser
+FROM debian:bullseye-slim AS dep-version-parser
 # This stage is necessary to limit the cache miss scope.
 # With this stage, any modification to package.json won't break the build cache of the next two stages as long as the
 # version unchanged.
@@ -42,7 +44,7 @@ RUN \
 
 # ---------------------------------------------------------------------------------------------------------------------
 
-FROM node:18-bullseye-slim as docker-minifier
+FROM node:18-bullseye-slim AS docker-minifier
 # The stage is used to further reduce the image size by removing unused files.
 
 WORKDIR /minifier
@@ -53,10 +55,11 @@ RUN \
     set -ex && \
     if [ "$USE_CHINA_NPM_REGISTRY" = 1 ]; then \
         npm config set registry https://registry.npmmirror.com && \
-        yarn config set registry https://registry.npmmirror.com ; \
+        yarn config set registry https://registry.npmmirror.com && \
+        pnpm config set registry https://registry.npmmirror.com ; \
     fi; \
-    yarn add @vercel/nft@$(cat .nft_version) fs-extra@$(cat .fs_extra_version) && \
-    yarn cache clean
+    corepack enable pnpm && \
+    pnpm add @vercel/nft@$(cat .nft_version) fs-extra@$(cat .fs_extra_version) --save-prod
 
 COPY . /app
 COPY --from=dep-builder /app /app
@@ -74,7 +77,7 @@ RUN \
 
 # ---------------------------------------------------------------------------------------------------------------------
 
-FROM node:18-bullseye-slim as chromium-downloader
+FROM node:18-bullseye-slim AS chromium-downloader
 # This stage is necessary to improve build concurrency and minimize the image size.
 # Yeah, downloading Chromium never needs those dependencies below.
 
@@ -92,19 +95,21 @@ RUN \
     if [ "$PUPPETEER_SKIP_DOWNLOAD" = 0 ] && [ "$TARGETPLATFORM" = 'linux/amd64' ]; then \
         if [ "$USE_CHINA_NPM_REGISTRY" = 1 ]; then \
             npm config set registry https://registry.npmmirror.com && \
-            yarn config set registry https://registry.npmmirror.com ; \
+            yarn config set registry https://registry.npmmirror.com && \
+            pnpm config set registry https://registry.npmmirror.com ; \
         fi; \
         echo 'Downloading Chromium...' && \
         unset PUPPETEER_SKIP_DOWNLOAD && \
-        yarn add puppeteer@$(cat /app/.puppeteer_version) && \
-        yarn cache clean ; \
+        corepack enable pnpm && \
+        pnpm add puppeteer@$(cat /app/.puppeteer_version) --save-prod && \
+        pnpm rb ; \
     else \
         mkdir -p /app/node_modules/.cache/puppeteer ; \
     fi;
 
 # ---------------------------------------------------------------------------------------------------------------------
 
-FROM node:18-bullseye-slim as app
+FROM node:18-bullseye-slim AS app
 
 LABEL org.opencontainers.image.authors="https://github.com/DIYgod/RSSHub"
 
